@@ -6,6 +6,7 @@
 #include <thread>
 #include <vector>
 #include <ranges>
+#include <syncstream>
 
 using namespace std::literals;
 
@@ -86,13 +87,18 @@ void may_throw()
     //throw std::runtime_error("Error#13");
 }
 
+std::osyncstream synced_cout()
+{
+    return std::osyncstream{std::cout};
+}
+
 void thread_basics()
 {
-    std::cout << "Main thread starts..." << std::endl;
+    synced_cout() << "Main thread starts..." << std::endl;
     const std::string text = "Hello Threads";
 
     std::thread empty_thd;
-    std::cout << "empty_thd: " << empty_thd.get_id() << "\n";
+    synced_cout() << "empty_thd: " << empty_thd.get_id() << "\n";
 
     std::thread thd_1{&background_work, 1, std::cref(text), 500ms};
     std::jthread thd_2 = create_thread();
@@ -117,7 +123,7 @@ void thread_basics()
 
     assert(thd_4.joinable());
 
-    std::cout << "Main thread ends..." << std::endl;
+    synced_cout() << "Main thread ends..." << std::endl;
 }
 
 void is_thread_safe_question()

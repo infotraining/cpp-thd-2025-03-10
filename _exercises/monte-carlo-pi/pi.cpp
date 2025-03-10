@@ -22,7 +22,7 @@ void calc_hits_per_thread(uintmax_t count, uintmax_t& hits)
         double x = rnd_distr(rnd_gen);
         double y = rnd_distr(rnd_gen);
         if (x * x + y * y < 1)
-            ++hits;
+            ++hits; // hot loop 
     }
 }
 
@@ -39,7 +39,7 @@ void calc_hits_per_thread_with_local_hits(uintmax_t count, uintmax_t& hits)
         double x = rnd_distr(rnd_gen);
         double y = rnd_distr(rnd_gen);
         if (x * x + y * y < 1)
-            ++local_hits;
+            ++local_hits; // incrementing local variable
     }
 
     hits += local_hits;
@@ -47,7 +47,7 @@ void calc_hits_per_thread_with_local_hits(uintmax_t count, uintmax_t& hits)
 
 struct Hits
 {
-    alignas(std::hardware_destructive_interference_size) uintmax_t value;
+    alignas(std::hardware_destructive_interference_size) uintmax_t value; // aligned to cache line
 };
 
 void calc_hits_per_thread_with_aligned_hits(uintmax_t count, Hits& hits)
@@ -66,33 +66,20 @@ void calc_hits_per_thread_with_aligned_hits(uintmax_t count, Hits& hits)
     }
 }
 
-void mc_pi_many_threads_with_aligned_hits()
+void calc_hits_per_thread_with_atomic(uintmax_t count, std::atomic<uintmax_t>& hits)
 {
-    std::cout << "\n------------------------------------\n";
-    std::cout << "Pi calculation started! Many threads - aligned hits" << endl;
-    const auto start = chrono::high_resolution_clock::now();
+    const auto thd_id = std::this_thread::get_id();
+    const auto seed = std::hash<std::thread::id>{}(thd_id);
+    std::mt19937_64 rnd_gen(seed);
+    std::uniform_real_distribution<double> rnd_distr(0.0, 1.0);
 
-    int num_threads = std::max(std::thread::hardware_concurrency(), 1u);
-    std::vector<Hits> hits_from_thread(num_threads);
-
+    for (long n = 0; n < count; ++n)
     {
-        std::vector<std::jthread> threads;
-
-        for (int i = 0; i < num_threads; i++)
-        {
-            threads.push_back(std::jthread{calc_hits_per_thread_with_aligned_hits, int(N / num_threads), std::ref(hits_from_thread[i])});
-        }
-    } // join
-
-    auto hits = std::accumulate(hits_from_thread.begin(), hits_from_thread.end(), 0ULL, [](auto red, auto arg) { return red + arg.value; });
-
-    const double pi = static_cast<double>(hits) / N * 4;
-
-    const auto end = chrono::high_resolution_clock::now();
-    const auto elapsed_time = chrono::duration_cast<chrono::milliseconds>(end - start).count();
-
-    std::cout << "Pi = " << pi << endl;
-    std::cout << "Elapsed = " << elapsed_time << "ms" << endl;
+        double x = rnd_distr(rnd_gen);
+        double y = rnd_distr(rnd_gen);
+        if (x * x + y * y < 1)
+            ++hits; // hot loop 
+    }
 }
 
 void mc_pi_one_thread()
@@ -171,56 +158,63 @@ void mc_pi_many_threads_with_local_counter()
     std::cout << "Elapsed = " << elapsed_time << "ms" << endl;
 }
 
+void mc_pi_many_threads_with_aligned_hits()
+{
+    std::cout << "\n------------------------------------\n";
+    std::cout << "Pi calculation started! Many threads - hits aligned for cache line" << endl;
+    const auto start = chrono::high_resolution_clock::now();
+
+    int num_threads = std::max(std::thread::hardware_concurrency(), 1u);
+    std::vector<Hits> hits_from_thread(num_threads);
+
+    {
+        std::vector<std::jthread> threads;
+
+        for (int i = 0; i < num_threads; i++)
+        {
+            threads.push_back(std::jthread{calc_hits_per_thread_with_aligned_hits, int(N / num_threads), std::ref(hits_from_thread[i])});
+        }
+    } // join
+
+    auto hits = std::accumulate(hits_from_thread.begin(), hits_from_thread.end(), 0ULL, [](auto red, auto arg) { return red + arg.value; });
+
+    const double pi = static_cast<double>(hits) / N * 4;
+
+    const auto end = chrono::high_resolution_clock::now();
+    const auto elapsed_time = chrono::duration_cast<chrono::milliseconds>(end - start).count();
+
+    std::cout << "Pi = " << pi << endl;
+    std::cout << "Elapsed = " << elapsed_time << "ms" << endl;
+}
+
+
 void mc_pi_with_atomic()
 {
-    const long N = 100'000'000;
-
-    //////////////////////////////////////////////////////////////////////////////
-    // single thread
-
     std::cout << "\n------------------------------------\n";
     cout << "Pi calculation started! Atomic!" << endl;
     const auto start = chrono::high_resolution_clock::now();
 
-    std::atomic<long> hits = 0;
+    std::atomic<uintmax_t> hits = 0;
 
-    std::vector<std::thread> threads;
-    threads.reserve(std::thread::hardware_concurrency());
+    int num_threads = std::max(std::thread::hardware_concurrency(), 1u);
+    std::vector<uintmax_t> hits_from_thread(num_threads);
 
-    for (unsigned i = 0; i < std::thread::hardware_concurrency(); i++)
     {
-        threads.emplace_back([&hits](long const iters) {
-            std::mt19937_64 rnd_gen(std::hash<std::thread::id>{}(std::this_thread::get_id()));
-            std::uniform_real_distribution rnd_dist(0.0, 1.0);
+        std::vector<std::jthread> threads;
 
-            long hits_local = 0;
+        for (int i = 0; i < num_threads; i++)
+        {
+            threads.push_back(std::jthread{calc_hits_per_thread_with_atomic, int(N / num_threads), std::ref(hits)});
+        }
+    } // join
 
-            for (long n = 0; n < iters; ++n)
-            {
-                double const x = rnd_dist(rnd_gen);
-                double const y = rnd_dist(rnd_gen);
-
-                if (x * x + y * y < 1)
-                    hits_local++;
-            }
-
-            hits += hits_local;
-        },
-            N / std::thread::hardware_concurrency());
-    }
-
-    for (auto& thread : threads)
-        thread.join();
-
-    const double pi = static_cast<double>(hits.load()) / N * 4;
+    const double pi = static_cast<double>(hits) / N * 4;
 
     const auto end = chrono::high_resolution_clock::now();
     const auto elapsed_time = chrono::duration_cast<chrono::milliseconds>(end - start).count();
 
     cout << "Pi = " << pi << endl;
     cout << "Elapsed = " << elapsed_time << "ms" << endl;
-
-    //////////////////////////////////////////////////////////////////////////////
 }
 
 int main()
