@@ -8,6 +8,22 @@
 
 using namespace std;
 
+void calc_hits_one_thread(uintmax_t count, uintmax_t& hits)
+{
+    const auto thd_id = std::this_thread::get_id();
+    const auto seed = std::hash<std::thread::id>{}(thd_id);
+    std::mt19937_64 rnd_gen(seed);
+    std::uniform_real_distribution<double> rnd_distr(0.0, 1.0);
+
+    for (long n = 0; n < count; ++n)
+    {
+        double x = rnd_distr(rnd_gen);
+        double y = rnd_distr(rnd_gen);
+        if (x * x + y * y < 1)
+            hits++;
+    }
+}
+
 int main()
 {
     const long N = 100'000'000;
@@ -20,15 +36,9 @@ int main()
     cout << "Pi calculation started!" << endl;
     const auto start = chrono::high_resolution_clock::now();
         
-    long hits = 0;
+    uintmax_t hits = 0;
 
-    for (long n = 0; n < N; ++n)
-    {
-        double x = rand() / static_cast<double>(RAND_MAX);
-        double y = rand() / static_cast<double>(RAND_MAX);
-        if (x * x + y * y < 1)
-            hits++;
-    }
+    calc_hits_one_thread(N, hits);
 
     const double pi = static_cast<double>(hits) / N * 4;
 
