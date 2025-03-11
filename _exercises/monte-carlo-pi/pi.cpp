@@ -45,6 +45,25 @@ void calc_hits_per_thread_with_local_hits(uintmax_t count, uintmax_t& hits)
     hits += local_hits;
 }
 
+void calc_hits_per_thread_with_mutex(uintmax_t count, uintmax_t& hits, std::mutex& mtx)
+{
+    const auto thd_id = std::this_thread::get_id();
+    const auto seed = std::hash<std::thread::id>{}(thd_id);
+    std::mt19937_64 rnd_gen(seed);
+    std::uniform_real_distribution<double> rnd_distr(0.0, 1.0);
+
+    for (long n = 0; n < count; ++n)
+    {
+        double x = rnd_distr(rnd_gen);
+        double y = rnd_distr(rnd_gen);
+        if (x * x + y * y < 1)
+        {
+            std::lock_guard lk{mtx};
+            ++hits;
+        }
+    }
+}
+
 struct Hits
 {
     alignas(std::hardware_destructive_interference_size) uintmax_t value; // aligned to cache line
@@ -78,7 +97,8 @@ void calc_hits_per_thread_with_atomic(uintmax_t count, std::atomic<uintmax_t>& h
         double x = rnd_distr(rnd_gen);
         double y = rnd_distr(rnd_gen);
         if (x * x + y * y < 1)
-            ++hits; // hot loop 
+            //++hits; // hot loop 
+            hits.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
@@ -187,6 +207,34 @@ void mc_pi_many_threads_with_aligned_hits()
     std::cout << "Elapsed = " << elapsed_time << "ms" << endl;
 }
 
+void mc_pi_with_mutex()
+{
+    std::cout << "\n------------------------------------\n";
+    std::cout << "Pi calculation started! Many threads - with mutex" << endl;
+    const auto start = chrono::high_resolution_clock::now();
+
+    int num_threads = std::max(std::thread::hardware_concurrency(), 1u);
+    uintmax_t hits = 0;
+    std::mutex mtx;
+
+    {
+        std::vector<std::jthread> threads;
+
+        for (int i = 0; i < num_threads; i++)
+        {
+            threads.push_back(std::jthread{calc_hits_per_thread_with_mutex, int(N / num_threads), std::ref(hits), std::ref(mtx)});
+        }
+    } // join
+
+    const double pi = static_cast<double>(hits) / N * 4;
+
+    const auto end = chrono::high_resolution_clock::now();
+    const auto elapsed_time = chrono::duration_cast<chrono::milliseconds>(end - start).count();
+
+    std::cout << "Pi = " << pi << endl;
+    std::cout << "Elapsed = " << elapsed_time << "ms" << endl;
+}
+
 
 void mc_pi_with_atomic()
 {
@@ -228,4 +276,6 @@ int main()
     mc_pi_many_threads_with_aligned_hits();
 
     mc_pi_with_atomic();
+
+    mc_pi_with_mutex();
 }
