@@ -1,10 +1,12 @@
 #include <iostream>
 #include <thread>
+#include <syncstream>
 
 class BankAccount
 {
     const int id_;
     double balance_;
+    mutable std::mutex m_mutex;
 
 public:
     BankAccount(int id, double balance)
@@ -15,22 +17,26 @@ public:
 
     void print() const
     {
-        std::cout << "Bank Account #" << id_ << "; Balance = " << balance_ << std::endl;
+        std::osyncstream synced_out{std::cout};
+        synced_out << "Bank Account #" << id_ << "; Balance = " << balance() << std::endl;
     }
 
     void transfer(BankAccount& to, double amount)
     {
+        std::lock_guard lock(m_mutex);
         balance_ -= amount;
         to.balance_ += amount;
     }
 
     void withdraw(double amount)
     {
+        std::lock_guard lock(m_mutex);
         balance_ -= amount;
     }
 
     void deposit(double amount)
     {
+        std::lock_guard lock(m_mutex);
         balance_ += amount;
     }
 
@@ -41,6 +47,7 @@ public:
 
     double balance() const
     {
+        std::lock_guard lock(m_mutex);
         return balance_;
     }
 };
