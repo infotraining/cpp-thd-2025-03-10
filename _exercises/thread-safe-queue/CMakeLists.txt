@@ -13,6 +13,9 @@ find_package(Threads REQUIRED)
 add_executable(${TARGET_MAIN} ${SRC_LIST} ${HEADERS_LIST})
 target_link_libraries(${TARGET_MAIN} PRIVATE Threads::Threads)
 
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread")
+
 add_subdirectory(src)
 
 #----------------------------------------
