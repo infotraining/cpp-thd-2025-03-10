@@ -45,6 +45,7 @@ add_subdirectory(synchronization-locking)
 add_subdirectory(event-synchronization)
 add_subdirectory(futures)
 add_subdirectory(thread-pool)
+add_subdirectory(sp-sc-queue)
 
 # Exercises
 add_subdirectory(_exercises/monte-carlo-pi)
