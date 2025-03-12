@@ -5,6 +5,7 @@
 #include <iostream>
 #include <random>
 #include <thread>
+#include <future>
 
 using namespace std;
 
@@ -100,6 +101,24 @@ void calc_hits_per_thread_with_atomic(uintmax_t count, std::atomic<uintmax_t>& h
             //++hits; // hot loop 
             hits.fetch_add(1, std::memory_order_relaxed);
     }
+}
+
+uintmax_t calc_hits_per_thread_with_future(uintmax_t count)
+{
+    const auto thd_id = std::this_thread::get_id();
+    const auto seed = std::hash<std::thread::id>{}(thd_id);
+    std::mt19937_64 rnd_gen(seed);
+    std::uniform_real_distribution<double> rnd_distr(0.0, 1.0);
+
+    uintmax_t hits = 0;
+    for (long n = 0; n < count; ++n)
+    {
+        double x = rnd_distr(rnd_gen);
+        double y = rnd_distr(rnd_gen);
+        if (x * x + y * y < 1)
+            ++hits; // hot loop 
+    }
+    return hits;
 }
 
 void mc_pi_one_thread()
@@ -265,6 +284,38 @@ void mc_pi_with_atomic()
     cout << "Elapsed = " << elapsed_time << "ms" << endl;
 }
 
+
+void mc_pi_with_futures()
+{
+    std::cout << "\n------------------------------------\n";
+    cout << "Pi calculation started! Future is now!" << endl;
+    const auto start = chrono::high_resolution_clock::now();
+
+    int num_threads = std::max(std::thread::hardware_concurrency(), 1u);
+
+    std::vector<std::future<uintmax_t>> futures;
+    futures.reserve(num_threads);
+    
+    for (int i = 0; i < num_threads; i++)
+    {
+        futures.push_back(std::async(std::launch::async, calc_hits_per_thread_with_future, int(N / num_threads)));
+    }
+
+    uintmax_t hits = 0;
+    for (auto& f: futures)
+    {
+        hits += f.get();
+    }
+
+    const double pi = static_cast<double>(hits) / N * 4;
+
+    const auto end = chrono::high_resolution_clock::now();
+    const auto elapsed_time = chrono::duration_cast<chrono::milliseconds>(end - start).count();
+
+    cout << "Pi = " << pi << endl;
+    cout << "Elapsed = " << elapsed_time << "ms" << endl;
+}
+
 int main()
 {
     mc_pi_one_thread();
@@ -278,4 +329,6 @@ int main()
     mc_pi_with_atomic();
 
     mc_pi_with_mutex();
+
+    mc_pi_with_futures();
 }
