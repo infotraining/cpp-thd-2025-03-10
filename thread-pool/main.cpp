@@ -7,8 +7,31 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <future>
+#include <syncstream>
+#include <random>
 
 using namespace std::literals;
+
+std::osyncstream sync_cout()
+{
+    return std::osyncstream{std::cout};
+}
+
+int calculate_square(int x)
+{
+    sync_cout() << "Starting calculation for " << x << " in " << std::this_thread::get_id() << std::endl;
+
+    std::random_device rd;
+    std::uniform_int_distribution<> distr(100, 5000);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(distr(rd)));
+
+    if (x % 3 == 0)
+        throw std::runtime_error("Error#3");
+
+    return x * x;
+}
 
 void background_work(size_t id, const std::string& text, std::chrono::milliseconds delay)
 {
@@ -16,19 +39,19 @@ void background_work(size_t id, const std::string& text, std::chrono::millisecon
 
     for (const auto& c : text)
     {
-        std::cout
+        sync_cout()
             << "bw#" << id << ": " << c << " - this_thread::id: "
             << std::this_thread::get_id() << std::endl;
 
         std::this_thread::sleep_for(delay);
     }
 
-    std::cout << "bw#" << id << " is finished..." << std::endl;
+    sync_cout() << "bw#" << id << " is finished..." << std::endl;
 }
 
-using Task = std::function<void()>;
+using Task = std::move_only_function<void()>;
 
-namespace ver_1
+inline namespace ver_1
 {
     class ThreadPool
     {
@@ -49,21 +72,31 @@ namespace ver_1
         ThreadPool& operator=(ThreadPool&&) = delete;
 
         ~ThreadPool()
-        {
-            auto kill_task = [this] {
-                is_done_ = true;
-            };
-
+        {        
             for (size_t i = 0; i < threads_.size(); ++i)
             {
-                tasks_.push(kill_task);
+                auto kill_task = [this] {
+                    is_done_ = true;
+                };
+                tasks_.push(std::move(kill_task));
             }
         }
 
         template <typename TTask>
-        void submit(TTask&& task)
+        auto submit(TTask&& task)
         {
-            tasks_.push(std::forward<TTask>(task));
+            using TResult = decltype(task());
+
+            // work-around for std::function as Task
+            // auto pt = std::make_shared<std::packaged_task<TResult()>>(std::forward<TTask>(task));
+            // std::future<TResult> f_result = pt->get_future();
+            // tasks_.push([pt] { (*pt)(); });
+
+            std::packaged_task<TResult()> pt(std::forward<TTask>(task));
+            std::future<TResult> f_result = pt.get_future();
+            tasks_.push(std::move(pt));
+
+            return f_result;
         }
 
     private:
@@ -84,7 +117,7 @@ namespace ver_1
     };
 } // namespace ver_1
 
-inline namespace ver_2
+namespace ver_2
 {
     class ThreadPool
     {
@@ -107,8 +140,9 @@ inline namespace ver_2
         ~ThreadPool()
         {            
             for (size_t i = 0; i < threads_.size(); ++i)
-            {
-                tasks_.push(STOP); // poisoning pill
+            {   
+                Task STOP;
+                tasks_.push(std::move(STOP)); // poisoning pill
             }
         }
 
@@ -116,8 +150,8 @@ inline namespace ver_2
         {
             if (!task)
                 throw std::invalid_argument("Empty task not supported");
-                
-            tasks_.push(task);
+
+            tasks_.push(std::move(task));
         }
 
     private:
@@ -144,7 +178,7 @@ inline namespace ver_2
 
 int main()
 {
-    std::cout << "Main thread starts..." << std::endl;
+    sync_cout() << "Main thread starts..." << std::endl;
     const std::string text = "Hello Threads";
 
     {
@@ -152,9 +186,26 @@ int main()
 
         thd_pool.submit([text] { background_work(1, text, 250ms); });
 
-        for (int i = 2; i <= 20; ++i)
-            thd_pool.submit([text, i] { background_work(i, text + std::to_string(i), std::chrono::milliseconds(100 + 10 * i)); });
+        std::vector<std::tuple<int, std::future<int>>> f_squares;
+
+        for (int i = 1; i < 20; ++i)
+        {
+            std::future<int> f_square = thd_pool.submit([i] { return calculate_square(i); });
+            f_squares.emplace_back(i, std::move(f_square));
+        }
+
+        for (auto& [n, f] : f_squares)
+        {
+            try
+            {
+                sync_cout() << n << '*' << n << " = " << f.get() << std::endl;
+            }
+            catch(const std::exception& e)
+            {
+                std::cout << e.what() << std::endl;
+            }                    
+        }
     }
 
-    std::cout << "Main thread ends..." << std::endl;
+    sync_cout() << "Main thread ends..." << std::endl;
 }
